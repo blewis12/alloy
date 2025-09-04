@@ -135,6 +135,51 @@ In those cases, exported fields are kept at their last healthy values.
 
 `pyroscope.write` doesn't expose any component-specific debug information.
 
+## Metrics
+
+`pyroscope.write` exposes the following metrics:
+
+| Metric                                   | Type      | Description                                                      |
+|------------------------------------------|-----------|------------------------------------------------------------------|
+| `pyroscope_write_sent_bytes_total`       | Counter   | Total number of compressed bytes sent to Pyroscope endpoints.    |
+| `pyroscope_write_dropped_bytes_total`    | Counter   | Total number of compressed bytes dropped by Pyroscope endpoints. |
+| `pyroscope_write_sent_profiles_total`    | Counter   | Total number of profiles sent to Pyroscope endpoints.            |
+| `pyroscope_write_dropped_profiles_total` | Counter   | Total number of profiles dropped by Pyroscope endpoints.         |
+| `pyroscope_write_retries_total`          | Counter   | Total number of retries to Pyroscope endpoints.                  |
+| `pyroscope_write_latency`                | Histogram | Write latency for sending profiles to Pyroscope endpoints.       |
+
+All metrics include an `endpoint` label identifying the specific endpoint URL. The `pyroscope_write_latency` metric includes an additional `type` label with the following values:
+
+- `push_total`: Total latency for push operations
+- `push_endpoint`: Per-endpoint latency for push operations  
+- `push_downstream`: Downstream request latency for push operations
+- `ingest_total`: Total latency for ingest operations
+- `ingest_endpoint`: Per-endpoint latency for ingest operations
+- `ingest_downstream`: Downstream request latency for ingest operations
+
+## Connection limit errors
+
+If you encounter errors like `"failed to push to endpoint" err="deadline_exceeded: context deadline exceeded"` when `pyroscope.write` is pushing to a `pyroscope.receive_http` component, this may indicate that the receiving component has reached its TCP connection limit.
+
+To resolve this issue:
+
+1. Check the `pyroscope_receive_http_tcp_connections` and `pyroscope_receive_http_tcp_connections_limit` metrics on the `pyroscope.receive_http` component.
+1. If the connection limit is being reached, you have several options:
+
+   **Option A: Increase the connection limit** in the `pyroscope.receive_http` configuration:
+   
+   ```alloy
+   pyroscope.receive_http "example" {
+     http {
+       conn_limit = 32768  // Increase from default 16384
+       // ... other settings
+     }
+     // ... rest of configuration
+   }
+   ```
+
+   **Option B: Horizontal scaling** - Deploy multiple instances of `pyroscope.receive_http` behind a load balancer to distribute the connection load.
+
 ## Example
 
 ```alloy

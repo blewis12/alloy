@@ -28,7 +28,7 @@ import (
 
 const (
 	OP_EXPLAIN_PLAN_OUTPUT = "explain_plan_output"
-	ExplainPlanName        = "explain_plan"
+	ExplainPlanName        = "explain_plans"
 )
 
 const selectDigestsForExplainPlan = `
@@ -45,77 +45,9 @@ const selectDigestsForExplainPlan = `
 
 const selectExplainPlanPrefix = `EXPLAIN FORMAT=JSON `
 
-type explainPlanOutputOperation string
-
-const (
-	explainPlanOutputOperationTableScan            explainPlanOutputOperation = "Table Scan"
-	explainPlanOutputOperationIndexScan            explainPlanOutputOperation = "Index Scan"
-	explainPlanOutputOperationNestedLoopJoin       explainPlanOutputOperation = "Nested Loop Join"
-	explainPlanOutputOperationHashJoin             explainPlanOutputOperation = "Hash Join"
-	explainPlanOutputOperationMergeJoin            explainPlanOutputOperation = "Merge Join"
-	explainPlanOutputOperationGroupingOperation    explainPlanOutputOperation = "Grouping Operation"
-	explainPlanOutputOperationOrderingOperation    explainPlanOutputOperation = "Ordering Operation"
-	explainPlanOutputOperationDuplicatesRemoval    explainPlanOutputOperation = "Duplicates Removal"
-	explainPlanOutputOperationMaterializedSubquery explainPlanOutputOperation = "Materialized Subquery"
-	explainPlanOutputOperationAttachedSubquery     explainPlanOutputOperation = "Attached Subquery"
-	explainPlanOutputOperationUnion                explainPlanOutputOperation = "Union"
-	explainPlanOutputOperationUnknown              explainPlanOutputOperation = "Unknown"
-)
-
-type explainPlanAccessType string
-
-const (
-	explainPlanAccessTypeAll   explainPlanAccessType = "all"
-	explainPlanAccessTypeIndex explainPlanAccessType = "index"
-	explainPlanAccessTypeRange explainPlanAccessType = "range"
-	explainPlanAccessTypeRef   explainPlanAccessType = "ref"
-	explainPlanAccessTypeEqRef explainPlanAccessType = "eq_ref"
-)
-
-type explainPlanJoinAlgorithm string
-
-const (
-	explainPlanJoinAlgorithmHash       explainPlanJoinAlgorithm = "hash"
-	explainPlanJoinAlgorithmMerge      explainPlanJoinAlgorithm = "merge"
-	explainPlanJoinAlgorithmNestedLoop explainPlanJoinAlgorithm = "nested_loop"
-)
-
-type explainPlanOutput struct {
-	Metadata metadataInfo `json:"metadata"`
-	Plan     planNode     `json:"plan"`
-}
-
-type metadataInfo struct {
-	DatabaseEngine  string `json:"databaseEngine"`
-	DatabaseVersion string `json:"databaseVersion"`
-	QueryIdentifier string `json:"queryIdentifier"`
-	GeneratedAt     string `json:"generatedAt"`
-}
-
-type planNode struct {
-	Operation explainPlanOutputOperation `json:"operation"`
-	Details   nodeDetails                `json:"details"`
-	Children  []planNode                 `json:"children,omitempty"`
-}
-
-type nodeDetails struct {
-	EstimatedRows int64                     `json:"estimatedRows"`
-	EstimatedCost *float64                  `json:"estimatedCost,omitempty"`
-	TableName     *string                   `json:"tableName,omitempty"`
-	Alias         *string                   `json:"alias,omitempty"`
-	AccessType    *explainPlanAccessType    `json:"accessType,omitempty"`
-	KeyUsed       *string                   `json:"keyUsed,omitempty"`
-	JoinType      *string                   `json:"joinType,omitempty"`
-	JoinAlgorithm *explainPlanJoinAlgorithm `json:"joinAlgorithm,omitempty"`
-	Condition     *string                   `json:"condition,omitempty"`
-	GroupByKeys   []string                  `json:"groupByKeys,omitempty"`
-	SortKeys      []string                  `json:"sortKeys,omitempty"`
-	Warning       *string                   `json:"warning,omitempty"`
-}
-
-func newExplainPlanOutput(logger log.Logger, dbVersion string, digest string, explainJson []byte, generatedAt string) (*explainPlanOutput, error) {
-	output := &explainPlanOutput{
-		Metadata: metadataInfo{
+func newExplainPlanOutput(logger log.Logger, dbVersion string, digest string, explainJson []byte, generatedAt string) (*database_observability.ExplainPlanOutput, error) {
+	output := &database_observability.ExplainPlanOutput{
+		Metadata: database_observability.ExplainPlanMetadataInfo{
 			DatabaseEngine:  "MySQL",
 			DatabaseVersion: dbVersion,
 			QueryIdentifier: digest,
@@ -137,7 +69,7 @@ func newExplainPlanOutput(logger log.Logger, dbVersion string, digest string, ex
 	return output, nil
 }
 
-func parseTopLevelPlanNode(logger log.Logger, topLevelPlanNode []byte) (planNode, error) {
+func parseTopLevelPlanNode(logger log.Logger, topLevelPlanNode []byte) (database_observability.ExplainPlanNode, error) {
 	if table, _, _, err := jsonparser.Get(topLevelPlanNode, "table"); err == nil {
 		tableDetails, err := parseTableNode(logger, table)
 		if err != nil {
@@ -188,21 +120,21 @@ func parseTopLevelPlanNode(logger log.Logger, topLevelPlanNode []byte) (planNode
 		return pnode, nil
 	}
 
-	return planNode{
-		Operation: explainPlanOutputOperationUnknown,
+	return database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationUnknown,
 	}, nil
 }
 
-func parseTableNode(logger log.Logger, tableNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationTableScan,
-		Details:   nodeDetails{},
+func parseTableNode(logger log.Logger, tableNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationTableScan,
+		Details:   database_observability.ExplainPlanNodeDetails{},
 	}
 
 	// Check for join algorithm. Nested loop would be set in parseNestedLoopJoinNode, since not all table nodes are children of nested loop joins.
 	if joinAlgorithm, _, _, err := jsonparser.Get(tableNode, "using_join_buffer"); err == nil {
 		if string(joinAlgorithm) == "hash join" {
-			joinAlgorithmConst := explainPlanJoinAlgorithmHash
+			joinAlgorithmConst := database_observability.ExplainPlanJoinAlgorithmHash
 			pnode.Details.JoinAlgorithm = &joinAlgorithmConst
 		}
 	}
@@ -218,7 +150,7 @@ func parseTableNode(logger log.Logger, tableNode []byte) (planNode, error) {
 	if err != nil {
 		return pnode, fmt.Errorf("failed to get access type: %w", err)
 	}
-	accessTypeconst := explainPlanAccessType(strings.ToLower(accessType))
+	accessTypeconst := database_observability.ExplainPlanAccessType(strings.ToLower(accessType))
 	pnode.Details.AccessType = &accessTypeconst
 
 	// Until now, the properties being parsed were probably mandatory, now let's look for ones that are optional.
@@ -275,16 +207,16 @@ func parseTableNode(logger log.Logger, tableNode []byte) (planNode, error) {
 	return pnode, nil
 }
 
-func parseNestedLoopJoinNode(logger log.Logger, nestedLoopJoinNode []byte) (planNode, error) {
-	algo := explainPlanJoinAlgorithmNestedLoop
-	pnode := planNode{
-		Operation: explainPlanOutputOperationNestedLoopJoin,
-		Details: nodeDetails{
+func parseNestedLoopJoinNode(logger log.Logger, nestedLoopJoinNode []byte) (database_observability.ExplainPlanNode, error) {
+	algo := database_observability.ExplainPlanJoinAlgorithmNestedLoop
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationNestedLoopJoin,
+		Details: database_observability.ExplainPlanNodeDetails{
 			JoinAlgorithm: &algo,
 		},
-		Children: make([]planNode, 0),
+		Children: make([]database_observability.ExplainPlanNode, 0),
 	}
-	var previousChild *planNode
+	var previousChild *database_observability.ExplainPlanNode
 	_, err := jsonparser.ArrayEach(nestedLoopJoinNode, func(value []byte, dataType jsonparser.ValueType, offset int, inerr error) {
 		tableNode, _, _, err := jsonparser.Get(value, "table")
 		if err != nil {
@@ -298,27 +230,27 @@ func parseNestedLoopJoinNode(logger log.Logger, nestedLoopJoinNode []byte) (plan
 			return
 		}
 		if previousChild != nil {
-			thisLoop := planNode{
-				Operation: explainPlanOutputOperationNestedLoopJoin,
-				Details: nodeDetails{
+			thisLoop := database_observability.ExplainPlanNode{
+				Operation: database_observability.ExplainPlanOutputOperationNestedLoopJoin,
+				Details: database_observability.ExplainPlanNodeDetails{
 					JoinAlgorithm: &algo,
 				},
 			}
 			if childDetails.Details.JoinAlgorithm != nil && *childDetails.Details.JoinAlgorithm != algo {
 				thisLoop.Details.JoinAlgorithm = childDetails.Details.JoinAlgorithm
 				switch *childDetails.Details.JoinAlgorithm {
-				case explainPlanJoinAlgorithmHash:
-					thisLoop.Operation = explainPlanOutputOperationHashJoin
-				case explainPlanJoinAlgorithmMerge:
-					thisLoop.Operation = explainPlanOutputOperationMergeJoin
+				case database_observability.ExplainPlanJoinAlgorithmHash:
+					thisLoop.Operation = database_observability.ExplainPlanOutputOperationHashJoin
+				case database_observability.ExplainPlanJoinAlgorithmMerge:
+					thisLoop.Operation = database_observability.ExplainPlanOutputOperationMergeJoin
 				default:
-					thisLoop.Operation = explainPlanOutputOperationNestedLoopJoin
+					thisLoop.Operation = database_observability.ExplainPlanOutputOperationNestedLoopJoin
 				}
 				// Remove join algorithm from child details since we've set it in the parent
 				childDetails.Details.JoinAlgorithm = nil
 			}
 
-			thisLoop.Children = []planNode{
+			thisLoop.Children = []database_observability.ExplainPlanNode{
 				*previousChild,
 				childDetails,
 			}
@@ -331,7 +263,7 @@ func parseNestedLoopJoinNode(logger log.Logger, nestedLoopJoinNode []byte) (plan
 		return pnode, err
 	}
 	if previousChild != nil {
-		if previousChild.Operation != explainPlanOutputOperationNestedLoopJoin && previousChild.Operation != explainPlanOutputOperationHashJoin {
+		if previousChild.Operation != database_observability.ExplainPlanOutputOperationNestedLoopJoin && previousChild.Operation != database_observability.ExplainPlanOutputOperationHashJoin {
 			pnode.Children = append(pnode.Children, *previousChild)
 		} else {
 			return *previousChild, nil
@@ -340,9 +272,9 @@ func parseNestedLoopJoinNode(logger log.Logger, nestedLoopJoinNode []byte) (plan
 	return pnode, nil
 }
 
-func parseGroupingOperationNode(logger log.Logger, groupingOperationNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationGroupingOperation,
+func parseGroupingOperationNode(logger log.Logger, groupingOperationNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationGroupingOperation,
 	}
 
 	children, err := parseTopLevelPlanNode(logger, groupingOperationNode)
@@ -354,9 +286,9 @@ func parseGroupingOperationNode(logger log.Logger, groupingOperationNode []byte)
 	return pnode, nil
 }
 
-func parseOrderingOperationNode(logger log.Logger, orderingOperationNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationOrderingOperation,
+func parseOrderingOperationNode(logger log.Logger, orderingOperationNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationOrderingOperation,
 	}
 
 	children, err := parseTopLevelPlanNode(logger, orderingOperationNode)
@@ -368,9 +300,9 @@ func parseOrderingOperationNode(logger log.Logger, orderingOperationNode []byte)
 	return pnode, nil
 }
 
-func parseDuplicatesRemovalNode(logger log.Logger, duplicatesRemovalNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationDuplicatesRemoval,
+func parseDuplicatesRemovalNode(logger log.Logger, duplicatesRemovalNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationDuplicatesRemoval,
 	}
 
 	children, err := parseTopLevelPlanNode(logger, duplicatesRemovalNode)
@@ -382,9 +314,9 @@ func parseDuplicatesRemovalNode(logger log.Logger, duplicatesRemovalNode []byte)
 	return pnode, nil
 }
 
-func parseMaterializedSubqueryNode(logger log.Logger, materializedSubqueryNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationMaterializedSubquery,
+func parseMaterializedSubqueryNode(logger log.Logger, materializedSubqueryNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationMaterializedSubquery,
 	}
 
 	queryBlock, _, _, err := jsonparser.Get(materializedSubqueryNode, "query_block")
@@ -401,9 +333,9 @@ func parseMaterializedSubqueryNode(logger log.Logger, materializedSubqueryNode [
 	return pnode, nil
 }
 
-func parseAttachedSubqueryNode(logger log.Logger, attachedSubqueryNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationAttachedSubquery,
+func parseAttachedSubqueryNode(logger log.Logger, attachedSubqueryNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationAttachedSubquery,
 	}
 
 	queryBlock, _, _, err := jsonparser.Get(attachedSubqueryNode, "query_block")
@@ -420,9 +352,9 @@ func parseAttachedSubqueryNode(logger log.Logger, attachedSubqueryNode []byte) (
 	return pnode, nil
 }
 
-func parseUnionResultNode(logger log.Logger, unionResultNode []byte) (planNode, error) {
-	pnode := planNode{
-		Operation: explainPlanOutputOperationUnion,
+func parseUnionResultNode(logger log.Logger, unionResultNode []byte) (database_observability.ExplainPlanNode, error) {
+	pnode := database_observability.ExplainPlanNode{
+		Operation: database_observability.ExplainPlanOutputOperationUnion,
 	}
 
 	querySpecifications, _, _, err := jsonparser.Get(unionResultNode, "query_specifications")
@@ -448,16 +380,37 @@ func parseUnionResultNode(logger log.Logger, unionResultNode []byte) (planNode, 
 }
 
 type queryInfo struct {
-	schemaName *string
-	digest     string
-	queryText  string
+	schemaName   string
+	digest       string
+	queryText    string
+	failureCount int
+	uniqueKey    string
+}
+
+func newQueryInfo(schemaName, digest, queryText string) *queryInfo {
+	return &queryInfo{
+		schemaName: schemaName,
+		digest:     digest,
+		queryText:  queryText,
+		uniqueKey:  schemaName + digest,
+	}
+}
+
+type knownSQLCodes string
+
+const (
+	accessDeniedSQLCode knownSQLCodes = "1044"
+)
+
+var unrecoverableSQLCodes = []knownSQLCodes{
+	accessDeniedSQLCode,
 }
 
 type ExplainPlanArguments struct {
 	DB              *sql.DB
-	InstanceKey     string
 	ScrapeInterval  time.Duration
 	PerScrapeRatio  float64
+	ExcludeSchemas  []string
 	EntryHandler    loki.EntryHandler
 	InitialLookback time.Time
 	DBVersion       string
@@ -467,28 +420,29 @@ type ExplainPlanArguments struct {
 
 type ExplainPlan struct {
 	dbConnection     *sql.DB
-	instanceKey      string
 	dbVersion        string
 	scrapeInterval   time.Duration
-	queryCache       []queryInfo
+	queryCache       map[string]*queryInfo
+	queryDenylist    map[string]*queryInfo
+	excludeSchemas   []string
 	perScrapeRatio   float64
 	currentBatchSize int
 	entryHandler     loki.EntryHandler
 	lastSeen         time.Time
-
-	logger  log.Logger
-	running *atomic.Bool
-	ctx     context.Context
-	cancel  context.CancelFunc
+	logger           log.Logger
+	running          *atomic.Bool
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 func NewExplainPlan(args ExplainPlanArguments) (*ExplainPlan, error) {
 	return &ExplainPlan{
 		dbConnection:   args.DB,
-		instanceKey:    args.InstanceKey,
 		dbVersion:      args.DBVersion,
 		scrapeInterval: args.ScrapeInterval,
-		queryCache:     make([]queryInfo, 0),
+		queryCache:     make(map[string]*queryInfo),
+		queryDenylist:  make(map[string]*queryInfo),
+		excludeSchemas: args.ExcludeSchemas,
 		perScrapeRatio: args.PerScrapeRatio,
 		entryHandler:   args.EntryHandler,
 		lastSeen:       args.InitialLookback,
@@ -557,13 +511,23 @@ func (c *ExplainPlan) populateQueryCache(ctx context.Context) error {
 			return err
 		}
 
-		var qi queryInfo
+		var schemaName, digest, queryText string
 		var ls time.Time
-		if err = rs.Scan(&qi.schemaName, &qi.digest, &qi.queryText, &ls); err != nil {
+		if err = rs.Scan(&schemaName, &digest, &queryText, &ls); err != nil {
 			level.Error(c.logger).Log("msg", "failed to scan digest for explain plans", "err", err)
 			return err
 		}
-		c.queryCache = append(c.queryCache, qi)
+		if slices.ContainsFunc(c.excludeSchemas, func(schema string) bool {
+			return strings.EqualFold(schema, schemaName)
+		}) {
+
+			continue
+		}
+
+		qi := newQueryInfo(schemaName, digest, queryText)
+		if _, ok := c.queryDenylist[qi.uniqueKey]; !ok {
+			c.queryCache[qi.uniqueKey] = qi
+		}
 		if ls.After(c.lastSeen) {
 			c.lastSeen = ls
 		}
@@ -582,16 +546,22 @@ func (c *ExplainPlan) fetchExplainPlans(ctx context.Context) error {
 	}
 
 	processedCount := 0
-	for i, qi := range c.queryCache {
+	for _, qi := range c.queryCache {
+		nonRecoverableFailureOccurred := false
 		if processedCount >= c.currentBatchSize {
 			break
 		}
 		logger := log.With(c.logger, "digest", qi.digest)
 
-		defer func(index int) {
-			c.queryCache = slices.Delete(c.queryCache, index, index+1)
+		defer func(nonRecoverableFailureOccurred *bool) {
+			if *nonRecoverableFailureOccurred {
+				qi.failureCount++
+				c.queryDenylist[qi.uniqueKey] = qi
+				level.Info(c.logger).Log("msg", "query denylisted", "digest", qi.digest)
+			}
+			delete(c.queryCache, qi.uniqueKey)
 			processedCount++
-		}(i)
+		}(&nonRecoverableFailureOccurred)
 
 		if strings.HasSuffix(qi.queryText, "...") {
 			level.Debug(logger).Log("msg", "skipping truncated query")
@@ -602,35 +572,40 @@ func (c *ExplainPlan) fetchExplainPlans(ctx context.Context) error {
 			continue
 		}
 
-		if qi.schemaName == nil {
-			continue
-		}
-		logger = log.With(logger, "schema_name", *qi.schemaName)
+		logger = log.With(logger, "schema_name", qi.schemaName)
 
-		byteExplainPlanJSON, err := c.fetchExplainPlanJSON(ctx, qi)
+		byteExplainPlanJSON, err := c.fetchExplainPlanJSON(ctx, *qi)
 		if err != nil {
 			level.Error(logger).Log("msg", "failed to fetch explain plan json bytes", "err", err)
+			for _, code := range unrecoverableSQLCodes {
+				if strings.Contains(err.Error(), fmt.Sprintf("Error %s", code)) {
+					nonRecoverableFailureOccurred = true
+					break
+				}
+			}
 			continue
 		}
 
 		if len(byteExplainPlanJSON) == 0 {
 			level.Error(logger).Log("msg", "explain plan json bytes is empty")
+			nonRecoverableFailureOccurred = true
 			continue
 		}
 
 		if !utf8.Valid(byteExplainPlanJSON) {
 			level.Error(logger).Log("msg", "explain plan json bytes is not valid UTF-8")
+			nonRecoverableFailureOccurred = true
 			continue
 		}
 
 		redactedByteExplainPlanJSON, _, err := redactAttachedConditions(byteExplainPlanJSON)
 		if err != nil {
 			level.Error(logger).Log("msg", "failed to redact explain plan json", "err", err)
+			nonRecoverableFailureOccurred = true
 			continue
 		}
 
 		level.Debug(logger).Log("msg", "db native explain plan",
-			"digest", qi.digest,
 			"db_native_explain_plan", base64.StdEncoding.EncodeToString(redactedByteExplainPlanJSON))
 
 		generatedAt := time.Now().Format(time.RFC3339)
@@ -639,6 +614,7 @@ func (c *ExplainPlan) fetchExplainPlans(ctx context.Context) error {
 		explainPlanOutputJSON, err := json.Marshal(explainPlanOutput)
 		if err != nil {
 			level.Error(logger).Log("msg", "failed to marshal explain plan output", "err", err)
+			nonRecoverableFailureOccurred = true
 			continue
 		}
 
@@ -648,12 +624,13 @@ func (c *ExplainPlan) fetchExplainPlans(ctx context.Context) error {
 				"incomplete_explain_plan", base64.StdEncoding.EncodeToString(explainPlanOutputJSON),
 				"err", genErr,
 			)
+			nonRecoverableFailureOccurred = true
 			continue
 		}
 
 		logMessage := fmt.Sprintf(
 			`schema="%s" digest="%s" explain_plan_output="%s"`,
-			*qi.schemaName,
+			qi.schemaName,
 			qi.digest,
 			base64.StdEncoding.EncodeToString(explainPlanOutputJSON),
 		)
@@ -661,7 +638,6 @@ func (c *ExplainPlan) fetchExplainPlans(ctx context.Context) error {
 		c.entryHandler.Chan() <- database_observability.BuildLokiEntry(
 			logging.LevelInfo,
 			OP_EXPLAIN_PLAN_OUTPUT,
-			c.instanceKey,
 			logMessage,
 		)
 		// TODO: Add context to logging when errors occur so the original node can be found.
@@ -678,7 +654,7 @@ func (c *ExplainPlan) fetchExplainPlanJSON(ctx context.Context, qi queryInfo) ([
 	}
 	defer conn.Close()
 
-	useStatement := fmt.Sprintf("USE `%s`", *qi.schemaName)
+	useStatement := fmt.Sprintf("USE `%s`", qi.schemaName)
 	if _, err := conn.ExecContext(ctx, useStatement); err != nil {
 		return nil, fmt.Errorf("failed to set schema: %w", err)
 	}
