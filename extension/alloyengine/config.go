@@ -3,6 +3,10 @@ package alloyengine
 import (
 	"fmt"
 	"os"
+
+	"github.com/grafana/alloy/internal/service/remotecfg"
+	"github.com/grafana/alloy/syntax/ast"
+	"github.com/grafana/alloy/syntax/parser"
 )
 
 type Config struct {
@@ -32,6 +36,27 @@ func (cfg *Config) Validate() error {
 	_, err := os.Stat(cfg.AlloyConfig.File)
 	if err != nil {
 		return fmt.Errorf("provided config path %s does not exist or is not readable: %w", cfg.AlloyConfig.File, err)
+	}
+
+	content, err := os.ReadFile(cfg.AlloyConfig.File)
+	if err != nil {
+		return fmt.Errorf("failed to read config file %s: %w", cfg.AlloyConfig.File, err)
+	}
+
+	file, err := parser.ParseFile(cfg.AlloyConfig.File, content)
+	if err != nil {
+		return fmt.Errorf("failed to parse config file %s: %w", cfg.AlloyConfig.File, err)
+	}
+
+	for _, stmt := range file.Body {
+		block, ok := stmt.(*ast.BlockStmt)
+		if !ok {
+			continue
+		}
+
+		if block.GetBlockName() == remotecfg.ServiceName {
+			return fmt.Errorf("config.file %s contains unsupported %q block for alloyengine", cfg.AlloyConfig.File, remotecfg.ServiceName)
+		}
 	}
 
 	return nil

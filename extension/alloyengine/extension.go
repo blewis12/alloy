@@ -103,6 +103,9 @@ func (e *alloyEngineExtension) Start(_ context.Context, host component.Host) err
 	if err := runCommand.ParseFlags(e.config.flagsAsSlice()); err != nil {
 		return fmt.Errorf("failed to parse flags: %w", err)
 	}
+	if err := e.config.Validate(); err != nil {
+		return fmt.Errorf("invalid alloyengine config: %w", err)
+	}
 
 	// Here we check if another extension instance is already running, if so we return an error
 	if !running.CompareAndSwap(false, true) {
