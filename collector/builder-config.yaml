@@ -87,6 +87,7 @@ receivers:
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/tcplogreceiver v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/vcenterreceiver v0.153.0
   - gomod: github.com/open-telemetry/opentelemetry-collector-contrib/receiver/zipkinreceiver v0.153.0
+  - gomod: go.opentelemetry.io/collector/receiver/nopreceiver v0.153.0
   - gomod: go.opentelemetry.io/collector/receiver/otlpreceiver v0.153.0
 
 connectors:
@@ -104,10 +105,22 @@ providers:
   - gomod: go.opentelemetry.io/collector/confmap/provider/httpsprovider v1.59.0
   - gomod: go.opentelemetry.io/collector/confmap/provider/yamlprovider v1.59.0
 
+excludes:
+  # The monolithic github.com/knadh/koanf v1.5.0 ships packages (parsers/yaml, providers/rawbytes,
+  # maps, ...) at the same import paths as the modular koanf/* modules. cmd/opampsupervisor and
+  # go.opentelemetry.io/collector/confmap require the modular form, so exclude the monolith to
+  # resolve the "ambiguous import" error during `go mod tidy`.
+  - github.com/knadh/koanf v1.5.0
+
 replaces:
   # Local modules.
   - github.com/grafana/alloy => ../
   - github.com/grafana/alloy/syntax => ../syntax
+  # supervisor_command.go imports cmd/opampsupervisor, but OCB does not list it as a component,
+  # so `go mod tidy` would otherwise resolve it (and drag pkg/stanza) to @latest and break the
+  # filelogreceiver family. Pin both to the v0.153 contrib train.
+  - github.com/open-telemetry/opentelemetry-collector-contrib/cmd/opampsupervisor => github.com/open-telemetry/opentelemetry-collector-contrib/cmd/opampsupervisor v0.153.0
+  - github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza => github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza v0.153.0
   # <BEGIN_SHARED_REPLACE_DIRECTIVES>
   # Replace yaml.v2 with fork
   - gopkg.in/yaml.v2 => github.com/rfratto/go-yaml v0.0.0-20211119180816-77389c3526dc
