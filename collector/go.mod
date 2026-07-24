@@ -1095,8 +1095,6 @@ replace github.com/grafana/alloy/syntax => ../syntax
 
 replace github.com/open-telemetry/opentelemetry-collector-contrib/cmd/opampsupervisor => github.com/open-telemetry/opentelemetry-collector-contrib/cmd/opampsupervisor v0.153.0
 
-replace github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza => github.com/open-telemetry/opentelemetry-collector-contrib/pkg/stanza v0.153.0
-
 replace gopkg.in/yaml.v2 => github.com/rfratto/go-yaml v0.0.0-20211119180816-77389c3526dc
 
 replace github.com/Azure/azure-sdk-for-go => github.com/Azure/azure-sdk-for-go v68.0.0+incompatible
